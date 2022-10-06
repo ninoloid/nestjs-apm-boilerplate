@@ -1,0 +1,120 @@
+version: '3.7'
+
+services:
+  poplite-db:
+    image: postgres:13.8-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    ports:
+      - '5432:5432'
+    volumes:
+      - poplite-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD', 'pg_isready']
+      interval: 10s
+      timeout: 20s
+      retries: 10
+    networks:
+      - poplite-network
+
+  poplite-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ELASTIC_APM_SERVICE_NAME: poplite-service
+      ELASTIC_APM_SERVER_URL: http://apmserver:8200/
+      NODE_ENV: development
+    ports:
+      - 3000:3000
+      - 8080:8080
+    depends_on:
+      poplite-db:
+        condition: service_healthy
+    volumes:
+      - .:/www/app
+      - /www/app/node_modules
+    command: /bin/sh -c "npm run migrate && npm run start:dev"
+    networks:
+      - poplite-network
+      - elastic
+
+  elasticsearch:
+    image: 985465380175.dkr.ecr.ap-southeast-1.amazonaws.com/elasticsearch:7.17.3
+    environment:
+      - node.name=elasticsearch
+      - discovery.type=single-node
+      - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
+      - bootstrap.memory_lock=true
+    volumes:
+      - type: volume
+        source: esdata1
+        target: /usr/share/elasticsearch/data
+    networks:
+      - elastic
+    ports:
+      - 9200
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.3
+    environment:
+      SERVER_NAME: localhost
+      ELASTICSEARCH_URL: http://elasticsearch:9200/
+    ports:
+      - 5601:5601
+    volumes:
+      - type: volume
+        source: logs
+        target: /var/log
+    ulimits:
+      nproc: 65535
+      memlock:
+        soft: -1
+        hard: -1
+    cap_add:
+      - ALL
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '1'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
+        window: 120s
+    # command: bash -c "echo xpack.reporting.enabled: true" >>> /usr/share/kibana/config/kibana.yml
+    networks:
+      - elastic
+  
+  apmserver:
+    image: docker.elastic.co/apm/apm-server:7.17.3
+    command: --strict.perms=false
+    ports:
+      - 8200:8200
+      - 8201:8200
+    environment:
+      - apm-server.host=0.0.0.0
+      - setup.kibana.host=kibana:5601
+      - output.elasticsearch.hosts=["elasticsearch:9200"] 
+    networks:
+      - elastic
+
+networks:
+  poplite-network:
+  elastic:
+
+volumes:
+  poplite-db:
+  logs:
+  esdata1:

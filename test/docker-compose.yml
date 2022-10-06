@@ -1,0 +1,11 @@
+version: '3.7'
+
+services:
+  poplite-test:
+    image: 985465380175.dkr.ecr.ap-southeast-1.amazonaws.com/poplite-service:latest
+    environment:
+      NODE_ENV: 'test'
+    command: npm run test
+    volumes:
+      - ../src:/www/test/src
+      - ../test:/www/test/test
